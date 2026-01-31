@@ -195,9 +195,36 @@ export default function R2Manager() {
     }
   };
 
-  const getPublicUrl = (key: string) => {
-    const domain = process.env.NEXT_PUBLIC_R2_DOMAIN;
+  const getPublicUrl = (key: string, bucketName: string | null) => {
+    let domain: string | undefined;
+
+    // 1. Check for bucket-specific domain overrides
+    if (bucketName && process.env.NEXT_PUBLIC_R2_BUCKET_DOMAINS) {
+      try {
+        const domains = JSON.parse(process.env.NEXT_PUBLIC_R2_BUCKET_DOMAINS);
+        if (domains[bucketName]) {
+          domain = domains[bucketName];
+        }
+      } catch (e) {
+        console.error("Failed to parse NEXT_PUBLIC_R2_BUCKET_DOMAINS", e);
+      }
+    }
+
+    // 2. Fallback to explicit public URL (Preferred fallback)
+    if (!domain && process.env.NEXT_PUBLIC_R2_PUBLIC_URL) {
+      domain = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
+    }
+
+    // 3. Fallback to generic domain variable (Historical/Default)
+    if (!domain && process.env.NEXT_PUBLIC_R2_DOMAIN) {
+      domain = process.env.NEXT_PUBLIC_R2_DOMAIN;
+    }
+
     if (!domain) return null;
+
+    // Clean domain (remove protocol if present) to ensure consistent format
+    domain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
     const cleanKey = key.startsWith('/') ? key.slice(1) : key;
     const encodedKey = cleanKey.split('/').map(p => encodeURIComponent(p)).join('/');
     return `https://${domain}/${encodedKey}`;
@@ -208,7 +235,7 @@ export default function R2Manager() {
     setShowPreview(true);
 
     // Use Public URL for preview
-    const url = getPublicUrl(file.Key);
+    const url = getPublicUrl(file.Key, currentBucket);
     if (url) {
       setPreviewUrl(url);
     } else {
@@ -219,7 +246,7 @@ export default function R2Manager() {
   };
 
   const handlePublicLink = (key: string) => {
-    const url = getPublicUrl(key);
+    const url = getPublicUrl(key, currentBucket);
     if (url) {
       navigator.clipboard.writeText(url);
       toast.success("Public URL copied to clipboard");
@@ -241,7 +268,7 @@ export default function R2Manager() {
     }
 
     const links = filteredFiles
-      .map(f => getPublicUrl(f.Key))
+      .map(f => getPublicUrl(f.Key, currentBucket))
       .filter(Boolean)
       .join('\n');
 
@@ -255,7 +282,7 @@ export default function R2Manager() {
   // But keeping it as utility if needed, but per request "use public only", we prioritize public.
 
   const handleDownload = (key: string) => {
-    const url = getPublicUrl(key);
+    const url = getPublicUrl(key, currentBucket);
     if (url) {
       window.open(url, '_blank');
     } else {
@@ -785,7 +812,7 @@ export default function R2Manager() {
                   </button>
                   <button
                     onClick={() => {
-                      const url = getPublicUrl(selectedFile.Key);
+                      const url = getPublicUrl(selectedFile.Key, currentBucket);
                       if (url) window.open(url, '_blank');
                     }}
                     className="col-span-2 btn btn-ghost justify-center text-xs border border-white/10"
