@@ -30,7 +30,20 @@ import {
   ClipboardPaste
 } from "lucide-react";
 import { toast } from "sonner";
-import { listBuckets, listFiles, deleteFile, getUploadUrl, getObjectUrl, copyFile, Bucket, R2Object, R2Folder } from "./actions";
+import {
+  listBuckets,
+  listFiles,
+  deleteFile,
+  getUploadUrl,
+  getObjectUrl,
+  copyFile,
+  readFileContent,
+  saveFileContent,
+  Bucket,
+  R2Object,
+  R2Folder
+} from "./actions";
+import Editor from "@monaco-editor/react";
 
 // --- Utility Functions ---
 function formatBytes(bytes: number, decimals = 2) {
@@ -60,6 +73,28 @@ function getFileIcon(fileName: string, iconSize = 18) {
   if (['txt', 'md', 'pdf', 'doc', 'docx'].includes(ext || '')) return <FileText size={iconSize} className="text-green-400" />;
 
   return <FileIcon size={iconSize} className="text-gray-400" />;
+}
+
+const EDITABLE_EXTENSIONS = ['txt', 'md', 'json', 'js', 'ts', 'jsx', 'tsx', 'css', 'html', 'py', 'sh', 'yaml', 'yml', 'xml', 'env', 'config'];
+
+function getLanguageByExtension(fileName: string) {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'js': return 'javascript';
+    case 'ts': return 'typescript';
+    case 'tsx': return 'typescript';
+    case 'jsx': return 'javascript';
+    case 'json': return 'json';
+    case 'html': return 'html';
+    case 'css': return 'css';
+    case 'md': return 'markdown';
+    case 'py': return 'python';
+    case 'yaml':
+    case 'yml': return 'yaml';
+    case 'xml': return 'xml';
+    case 'sh': return 'shell';
+    default: return 'plaintext';
+  }
 }
 
 // --- Components ---
@@ -97,6 +132,11 @@ export default function R2Manager() {
   const [selectedFile, setSelectedFile] = useState<R2Object | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, item: R2Object | R2Folder, type: 'file' | 'folder' } | null>(null);
+
+  // Editor State
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -243,6 +283,35 @@ export default function R2Manager() {
       console.warn("NEXT_PUBLIC_R2_DOMAIN not set");
       setPreviewUrl(null);
     }
+  };
+
+  const handleEditFile = async (file: R2Object) => {
+    if (!currentBucket) return;
+    setLoading(true);
+    const res = await readFileContent(currentBucket, file.Key);
+    if (res.success) {
+      setEditContent(res.content || "");
+      setSelectedFile(file);
+      setIsEditing(true);
+    } else {
+      toast.error("Failed to read file: " + res.error);
+    }
+    setLoading(false);
+  };
+
+  const handleSaveFile = async () => {
+    if (!currentBucket || !selectedFile) return;
+    setIsSaving(true);
+    const contentType = selectedFile.Key.endsWith('.json') ? 'application/json' : 'text/plain';
+    const res = await saveFileContent(currentBucket, selectedFile.Key, editContent, contentType);
+    if (res.success) {
+      toast.success("File saved successfully");
+      // Optionally refresh file list to update size/date
+      loadFiles(currentBucket, currentPrefix);
+    } else {
+      toast.error("Failed to save file: " + res.error);
+    }
+    setIsSaving(false);
   };
 
   const handlePublicLink = (key: string) => {
@@ -825,6 +894,15 @@ export default function R2Manager() {
                   >
                     <Trash2 size={14} /> Delete File
                   </button>
+
+                  {EDITABLE_EXTENSIONS.includes(selectedFile.Key.split('.').pop()?.toLowerCase() || '') && (
+                    <button
+                      onClick={() => handleEditFile(selectedFile)}
+                      className="col-span-2 btn btn-primary justify-center text-xs mt-2 bg-blue-600 hover:bg-blue-700"
+                    >
+                      <FileCode size={14} /> Edit File
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -833,6 +911,60 @@ export default function R2Manager() {
               </div>
             )}
           </div>
+
+          {/* --- FULLSCREEN EDITOR --- */}
+          {isEditing && selectedFile && (
+            <div className="fixed inset-0 z-[100] bg-[#050505] flex flex-col animate-in fade-in duration-200">
+              <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5 backdrop-blur-md">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                    <FileCode size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-200">{selectedFile.Key.split('/').pop()}</h2>
+                    <p className="text-[10px] text-gray-500 font-mono">{selectedFile.Key}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSaveFile}
+                    disabled={isSaving}
+                    className="btn btn-primary h-9 py-0 px-4 text-xs"
+                  >
+                    {isSaving ? (
+                      <span className="spinner w-3 h-3 border-white/30 border-t-white mr-2" />
+                    ) : (
+                      <Check size={14} className="mr-2" />
+                    )}
+                    Save Changes
+                  </button>
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 relative overflow-hidden">
+                <Editor
+                  height="100%"
+                  theme="vs-dark"
+                  language={getLanguageByExtension(selectedFile.Key)}
+                  value={editContent}
+                  onChange={(value) => setEditContent(value || "")}
+                  options={{
+                    minimap: { enabled: true },
+                    fontSize: 14,
+                    wordWrap: "on",
+                    padding: { top: 20 },
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
         </div>
 
@@ -856,6 +988,11 @@ export default function R2Manager() {
               <button className="w-full text-left px-4 py-2 hover:bg-white/10 flex items-center gap-2 hover:text-white" onClick={() => { handleDownload((contextMenu.item as R2Object).Key); setContextMenu(null); }}>
                 <Download size={14} /> Download
               </button>
+              {EDITABLE_EXTENSIONS.includes((contextMenu.item as R2Object).Key.split('.').pop()?.toLowerCase() || '') && (
+                <button className="w-full text-left px-4 py-2 hover:bg-white/10 flex items-center gap-2 hover:text-white" onClick={() => { handleEditFile(contextMenu.item as R2Object); setContextMenu(null); }}>
+                  <FileCode size={14} /> Edit
+                </button>
+              )}
               <div className="h-[1px] bg-white/10 my-1"></div>
 
               <button

@@ -10,6 +10,7 @@ import {
     CopyObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Upload } from "@aws-sdk/lib-storage";
 
 export interface Bucket {
     Name: string;
@@ -129,6 +130,41 @@ export async function getObjectUrl(bucketName: string, key: string) {
         const url = await getSignedUrl(r2, command, { expiresIn: 3600 });
         return { success: true, url };
     } catch (error: any) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function readFileContent(bucketName: string, key: string) {
+    try {
+        const command = new GetObjectCommand({
+            Bucket: bucketName,
+            Key: key,
+        });
+        const response = await r2.send(command);
+        const content = await response.Body?.transformToString();
+        return { success: true, content };
+    } catch (error: any) {
+        console.error("Read file error:", error);
+        return { success: false, error: error.message };
+    }
+}
+
+export async function saveFileContent(bucketName: string, key: string, content: string, contentType: string = "text/plain") {
+    try {
+        const parallelUploads3 = new Upload({
+            client: r2,
+            params: {
+                Bucket: bucketName,
+                Key: key,
+                Body: content,
+                ContentType: contentType,
+            },
+        });
+
+        await parallelUploads3.done();
+        return { success: true };
+    } catch (error: any) {
+        console.error("Save file error:", error);
         return { success: false, error: error.message };
     }
 }
