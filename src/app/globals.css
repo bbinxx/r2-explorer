@@ -1,30 +1,6 @@
-@import "tailwindcss";
-
-@theme {
-  --color-bg-app: #050505;
-  --color-bg-panel: #0a0a0a;
-  --color-bg-card: rgba(255, 255, 255, 0.03);
-  --color-bg-card-hover: rgba(255, 255, 255, 0.06);
-  --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-border-focus: rgba(244, 129, 32, 0.5);
-
-  --color-text-primary: #ededed;
-  --color-text-secondary: #a3a3a3;
-  --color-text-muted: #525252;
-
-  --color-accent: #f48120;
-  --color-accent-glow: rgba(244, 129, 32, 0.25);
-  --color-accent-hover: #fa9d50;
-
-  --color-danger: #ef4444;
-  --color-danger-glow: rgba(239, 68, 68, 0.25);
-
-  --radius-default: 12px;
-  --radius-sm: 8px;
-
-  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.2);
-  --glass-blur: blur(12px);
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   --bg-app: #050505;

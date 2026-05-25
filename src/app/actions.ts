@@ -1,5 +1,7 @@
 "use server";
 
+import { cookies } from "next/headers";
+import bcrypt from "bcryptjs";
 import { r2 } from "@/lib/r2";
 import {
     ListBucketsCommand,
@@ -10,6 +12,7 @@ import {
     CopyObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Upload } from "@aws-sdk/lib-storage";
 
 export interface Bucket {
     Name: string;
@@ -21,6 +24,75 @@ export interface R2Object {
     Size: number;
     LastModified: string;
     Url?: string;
+}
+
+export async function checkAuth(): Promise<boolean> {
+    const authCookie = cookies().get("r2_auth_session");
+    if (authCookie && authCookie.value === "authenticated") {
+        return true;
+    }
+    // Check if passcode is set in env at all
+    if (!process.env.SYSTEM_PASSCODE) {
+        return true; // No passcode configured, open access
+    }
+    return false;
+}
+
+export async function login(passcode: string): Promise<{ success: boolean; error?: string }> {
+    try {
+        const hash = process.env.SYSTEM_PASSCODE;
+        if (!hash) {
+            return { success: true };
+        }
+        
+        const isValid = await bcrypt.compare(passcode, hash);
+        if (isValid) {
+            cookies().set("r2_auth_session", "authenticated", {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                maxAge: 60 * 60 * 24 * 7, // 1 week
+                path: "/",
+            });
+            return { success: true };
+        } else {
+            return { success: false, error: "Invalid passcode" };
+        }
+    } catch (error: any) {
+        return { success: false, error: "Login failed" };
+    }
+}
+
+export async function logout() {
+    cookies().delete("r2_auth_session");
+}
+
+export async function getInitialData(): Promise<{
+    isAuthenticated: boolean;
+    buckets?: Bucket[];
+    error?: string;
+}> {
+    const authCookie = cookies().get("r2_auth_session");
+    const isAuthenticated =
+        (authCookie && authCookie.value === "authenticated") ||
+        !process.env.SYSTEM_PASSCODE;
+
+    if (!isAuthenticated) {
+        return { isAuthenticated: false };
+    }
+
+    try {
+        const data = await r2.send(new ListBucketsCommand({}));
+        return {
+            isAuthenticated: true,
+            buckets:
+                data.Buckets?.map((b) => ({
+                    Name: b.Name || "Unknown",
+                    CreationDate: b.CreationDate?.toISOString() || "",
+                })) || [],
+        };
+    } catch (error: any) {
+        return { isAuthenticated: true, error: error.message };
+    }
 }
 
 export async function listBuckets(): Promise<{ success: boolean; buckets?: Bucket[]; error?: string }> {
@@ -119,16 +191,52 @@ export async function getUploadUrl(bucketName: string, key: string, contentType:
     }
 }
 
-export async function getObjectUrl(bucketName: string, key: string) {
+export async function getObjectUrl(bucketName: string, key: string, download: boolean = false) {
     try {
         const command = new GetObjectCommand({
             Bucket: bucketName,
             Key: key,
+            ResponseContentDisposition: download ? `attachment; filename="${key.split('/').pop()}"` : undefined,
         });
         // Link valid for 1 hour
         const url = await getSignedUrl(r2, command, { expiresIn: 3600 });
         return { success: true, url };
     } catch (error: any) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function readFileContent(bucketName: string, key: string) {
+    try {
+        const command = new GetObjectCommand({
+            Bucket: bucketName,
+            Key: key,
+        });
+        const response = await r2.send(command);
+        const content = await response.Body?.transformToString();
+        return { success: true, content };
+    } catch (error: any) {
+        console.error("Read file error:", error);
+        return { success: false, error: error.message };
+    }
+}
+
+export async function saveFileContent(bucketName: string, key: string, content: string, contentType: string = "text/plain") {
+    try {
+        const parallelUploads3 = new Upload({
+            client: r2,
+            params: {
+                Bucket: bucketName,
+                Key: key,
+                Body: content,
+                ContentType: contentType,
+            },
+        });
+
+        await parallelUploads3.done();
+        return { success: true };
+    } catch (error: any) {
+        console.error("Save file error:", error);
         return { success: false, error: error.message };
     }
 }
